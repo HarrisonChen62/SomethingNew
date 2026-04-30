@@ -1,6 +1,6 @@
 # All Right Reserved!!
 # 2024/09/28 Harrison Chen <harrison.mm.chen@gmail.com>
-import os, sys, requests, re
+import os, sys, requests, re, time, random
 from PySide6 import QtGui
 from PySide6.QtWidgets import QApplication, QWidget, QTableView, QGridLayout, QMessageBox, QAbstractItemView, QMenu
 from PySide6.QtCore import Qt, QObject, QAbstractTableModel, QModelIndex, QThread, QTimer, QEvent, QPoint
@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from dataclasses import dataclass
 import pickle
 from functools import partial
+import yt_dlp
 #import debugpy
 
 @dataclass
@@ -53,9 +54,54 @@ def GetTrickUrl(st:VIDEO_CLIP)->bool:
             return True
     return False
 
+def get_latest_video_title(st:VIDEO_CLIP)->bool:
+    """
+    使用 yt-dlp 獲取 YouTube 頻道最新影片的標題。
+    """
+    # 設定 yt-dlp 參數
+    ydl_opts = {
+        'quiet': True,              # 不輸出處理日誌
+        'no_warnings': True,        # 隱藏警告訊息
+        'extract_flat': True,       # 僅提取列表資訊，不解析完整影片內容（速度極快）
+        'playlist_items': '1',      # 僅獲取最新的一項
+        'dump_single_json': True,   # 回傳單一 JSON 格式
+        'extractor_args': {'youtube':{'lang':['zh-TW']}}, # 強制指定 YouTube 提取器的語係為 繁體中文 (zh-TW)
+        'http_headers': {'Accept-Language':'zh-TW;q=0.9,en;q=0.8'}, # 額外保險：在 HTTP Header 中也加入語系偏好
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # 獲取頻道資訊
+            info = ydl.extract_info(st.URL, download=False)
+            # 解析第一支影片的標題
+            if 'entries' in info and len(info['entries']) > 0:
+                latest_video = info['entries'][0]
+                st.Title = latest_video.get('title')
+                st.ShowTime = latest_video.get('live_status')
+                # 可能的值：'is_upcoming' (即將直播), 'is_live' (正在直播), 'was_live' (直播重播), None (一般影片)
+                match st.ShowTime:
+                    case 'is_upcoming': st.ShowTime = f'即將直播'
+                    case 'is_live': st.ShowTime = f'正在直播'
+                    case 'was_live':st.ShowTime = f'直播重播'
+                    case None:
+                        st.ShowTime = f'一般影片'
+                        seconds = latest_video.get('duration')
+                        if seconds:
+                            seconds = int(seconds)
+                            hours, remainder = divmod(seconds, 3600)
+                            minutes, seconds = divmod(remainder, 60)
+                            st.ShowTime = f"{hours}:{minutes:02d}:{seconds:02d}" if hours > 0 else f"{minutes}:{seconds:02d}"
+                        else:
+                            st.ShowTime += f'時間長度未知'
+                return True
+    except Exception as e:
+        st.Title = f"發生錯誤: {e}"
+        pass
+    return False
+
 def GetVideoTitleFromUrl(st:VIDEO_CLIP)->bool:
     if st.URL.find(f'channel') != -1:
         return GetTrickUrl(st)
+    return get_latest_video_title(st)
     response = requests.get(st.URL)
     response.encoding = 'utf8'
     html_content = response.text
@@ -334,6 +380,7 @@ class YChannelModel(QAbstractTableModel):
                     item.State = f'失敗'
                 #self.checkTitle(row,item)
                 #title = item.Title
+                time.sleep(random.uniform(0.1, 2.1))
             self.RedrawState(row)
             self.m_downloadTitle.append(title)
 
