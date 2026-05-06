@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import pickle
 from functools import partial
 import yt_dlp
+from datetime import datetime
 #import debugpy
 
 @dataclass
@@ -54,6 +55,33 @@ def GetTrickUrl(st:VIDEO_CLIP)->bool:
             return True
     return False
 
+def get_relative_time(timestamp):
+    if not timestamp:
+        return "未知時間"
+    
+    # 計算秒數差
+    seconds_diff = int(time.time() - timestamp)
+    
+    # 定義時間間隔（秒）
+    minute = 60
+    hour = 3600
+    day = 86400
+    month = 2592000  # 以 30 天計
+    year = 31536000
+    
+    if seconds_diff < minute:
+        return f"{seconds_diff} 秒前"
+    elif seconds_diff < hour:
+        return f"{seconds_diff // minute} 分鐘前"
+    elif seconds_diff < day:
+        return f"{seconds_diff // hour} 小時前"
+    elif seconds_diff < month:
+        return f"{seconds_diff // day} 天前"
+    elif seconds_diff < year:
+        return f"{seconds_diff // month} 個月前"
+    else:
+        return f"{seconds_diff // year} 年前"
+
 def get_latest_video_title(st:VIDEO_CLIP)->bool:
     """
     使用 yt-dlp 獲取 YouTube 頻道最新影片的標題。
@@ -63,6 +91,7 @@ def get_latest_video_title(st:VIDEO_CLIP)->bool:
         'quiet': True,              # 不輸出處理日誌
         'no_warnings': True,        # 隱藏警告訊息
         'extract_flat': True,       # 僅提取列表資訊，不解析完整影片內容（速度極快）
+        #'extract_flat': 'in_playlist',  # 最快模式：不解析單獨影片
         'playlist_items': '1',      # 僅獲取最新的一項
         'dump_single_json': True,   # 回傳單一 JSON 格式
         'extractor_args': {'youtube':{'lang':['zh-TW']}}, # 強制指定 YouTube 提取器的語係為 繁體中文 (zh-TW)
@@ -71,28 +100,49 @@ def get_latest_video_title(st:VIDEO_CLIP)->bool:
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # 獲取頻道資訊
-            info = ydl.extract_info(st.URL, download=False)
+            info = ydl.extract_info(st.URL, download=False, process=False)
             # 解析第一支影片的標題
-            if 'entries' in info and len(info['entries']) > 0:
-                latest_video = info['entries'][0]
-                st.Title = latest_video.get('title')
-                st.ShowTime = latest_video.get('live_status')
-                # 可能的值：'is_upcoming' (即將直播), 'is_live' (正在直播), 'was_live' (直播重播), None (一般影片)
-                match st.ShowTime:
-                    case 'is_upcoming': st.ShowTime = f'即將直播'
-                    case 'is_live': st.ShowTime = f'正在直播'
-                    case 'was_live':st.ShowTime = f'直播重播'
-                    case None:
-                        st.ShowTime = f'一般影片'
-                        seconds = latest_video.get('duration')
-                        if seconds:
-                            seconds = int(seconds)
-                            hours, remainder = divmod(seconds, 3600)
-                            minutes, seconds = divmod(remainder, 60)
-                            st.ShowTime = f"{hours}:{minutes:02d}:{seconds:02d}" if hours > 0 else f"{minutes}:{seconds:02d}"
-                        else:
-                            st.ShowTime += f'時間長度未知'
-                return True
+            first_entry = next(info['entries'])
+            st.Title = first_entry['title']
+            video_url = first_entry['url']
+            # 2. 針對該影片抓取完整細節
+            video_info = ydl.extract_info(video_url, download=False)
+            st.ShowTime = video_info.get('live_status')
+            # 可能的值：'is_upcoming' (即將直播), 'is_live' (正在直播), 'was_live' (直播重播), None (一般影片)
+            match st.ShowTime:
+                case 'is_upcoming': st.ShowTime = f'即將直播'
+                case 'is_live': st.ShowTime = f'正在直播'
+                case 'was_live':st.ShowTime = f'直播重播'
+                case 'not_live'|None:
+                    st.ShowTime = f'一般影片'
+                    seconds = video_info.get('timestamp')
+                    if seconds:
+                        st.ShowTime = get_relative_time(seconds)
+                    else:
+                        st.ShowTime += f'時間未知'
+            return True
+            #info = ydl.extract_info(st.URL, download=False)
+            #if 'entries' in info and len(info['entries']) > 0:
+            #    latest_video = info['entries'][0]
+            #    st.Title = latest_video.get('title')
+            #    st.ShowTime = latest_video.get('live_status')
+            #    # 可能的值：'is_upcoming' (即將直播), 'is_live' (正在直播), 'was_live' (直播重播), None (一般影片)
+            #    match st.ShowTime:
+            #        case 'is_upcoming': st.ShowTime = f'即將直播'
+            #        case 'is_live': st.ShowTime = f'正在直播'
+            #        case 'was_live':st.ShowTime = f'直播重播'
+            #        case None|'not_live':
+            #            st.ShowTime = f'一般影片'
+            #            seconds = latest_video.get('upload_date')
+            #            if seconds:
+            #                #seconds = int(seconds)
+            #                #hours, remainder = divmod(seconds, 3600)
+            #                #minutes, seconds = divmod(remainder, 60)
+            #                #st.ShowTime = f"{hours}:{minutes:02d}:{seconds:02d}" if hours > 0 else f"{minutes}:{seconds:02d}"
+            #                st.ShowTime = to_relative_time(seconds)
+            #            else:
+            #                st.ShowTime += f'時間長度未知'
+            #    return True
     except Exception as e:
         st.Title = f"發生錯誤: {e}"
         pass
